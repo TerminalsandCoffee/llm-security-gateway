@@ -1,0 +1,70 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# Prevent concurrent deployments
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    permissions:
+      id-token: write   # For OIDC auth with AWS
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build deployment package
+        run: bash scripts/package.sh
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.12"
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
+        env:
+          TF_VAR_gateway_api_keys: ${{ secrets.GATEWAY_API_KEYS }}
+          TF_VAR_upstream_api_key: ${{ secrets.UPSTREAM_API_KEY }}
+          TF_VAR_upstream_base_url: ${{ vars.UPSTREAM_BASE_URL || 'https://api.openai.com' }}
+          TF_VAR_environment: ${{ vars.ENVIRONMENT || 'dev' }}
+          TF_VAR_enable_bedrock: ${{ vars.ENABLE_BEDROCK || 'false' }}
+          TF_VAR_client_store_backend: ${{ vars.CLIENT_STORE_BACKEND || 'json' }}
+          TF_VAR_dynamodb_table_name: ${{ vars.DYNAMODB_TABLE_NAME || 'llm-gateway-clients' }}
+
+      - name: Terraform Apply
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      - name: Show outputs
+        working-directory: terraform
+        run: |
+          echo "## Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "**API Endpoint:** $(terraform output -raw api_endpoint)" >> $GITHUB_STEP_SUMMARY
+          echo "**Function:** $(terraform output -raw lambda_function_name)" >> $GITHUB_STEP_SUMMARY

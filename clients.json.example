@@ -1,0 +1,22 @@
+{
+  "clients": [
+    {
+      "client_id": "acme-corp",
+      "api_key": "gw-acme-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "provider": "openai",
+      "rate_limit_rpm": 120,
+      "model_allowlist": ["gpt-4o", "gpt-4o-mini"],
+      "upstream_api_key": "sk-your-openai-key-here",
+      "status": "active"
+    },
+    {
+      "client_id": "internal-bedrock",
+      "api_key": "gw-bedrock-yyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+      "provider": "bedrock",
+      "rate_limit_rpm": 30,
+      "model_allowlist": [],
+      "bedrock_model_id": "anthropic.claude-3-sonnet-20240229-v1:0",
+      "status": "active"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+aws_region      = "us-east-1"
+environment     = "dev"
+function_name   = "llm-security-gateway"
+lambda_memory   = 256
+lambda_timeout  = 60
+
+# Sensitive — use TF_VAR_ env vars or a .tfvars file NOT committed to git
+# gateway_api_keys = "key-1,key-2"
+# upstream_api_key = "sk-your-key"
+
+upstream_base_url   = "https://api.openai.com"
+injection_threshold = "0.7"
+pii_action          = "redact"
+rate_limit_rpm      = "60"
+
+# Phase 4: Bedrock + DynamoDB
+enable_bedrock       = false
+client_store_backend = "json"           # "json" or "dynamodb"
+dynamodb_table_name  = "llm-gateway-clients"
