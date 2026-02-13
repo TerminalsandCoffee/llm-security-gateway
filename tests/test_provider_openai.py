@@ -1,5 +1,6 @@
 """Tests for src/providers/openai.py — OpenAI provider."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -94,3 +95,155 @@ class TestOpenAIProvider:
     async def test_close_when_no_client(self, provider):
         """Closing without a client should not raise."""
         await provider.close()
+
+
+class TestOpenAIStreaming:
+
+    async def test_stream_yields_chunks(self, provider, override_settings):
+        override_settings(
+            UPSTREAM_BASE_URL="https://api.openai.com",
+            UPSTREAM_API_KEY="sk-test",
+        )
+        # Simulate SSE lines from upstream
+        sse_lines = [
+            'data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}',
+            "",
+            'data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":" world"},"finish_reason":null}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_response)
+        mock_client.is_closed = False
+        provider._client = mock_client
+
+        chunks = []
+        async for chunk in provider.chat_completion_stream(
+            body={"model": "gpt-4o", "messages": []},
+            api_key="sk-test",
+            model_id="",
+        ):
+            chunks.append(chunk)
+
+        assert len(chunks) == 3  # 2 content + 1 DONE
+        assert chunks[0].text_delta == "Hello"
+        assert chunks[1].text_delta == " world"
+        assert chunks[2].is_done
+        assert chunks[2].data == "[DONE]"
+
+    async def test_stream_extracts_empty_delta(self, provider, override_settings):
+        """Chunks without content delta should yield empty text_delta."""
+        override_settings(
+            UPSTREAM_BASE_URL="https://api.openai.com",
+            UPSTREAM_API_KEY="sk-test",
+        )
+        sse_lines = [
+            'data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}',
+            "",
+            "data: [DONE]",
+            "",
+        ]
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_response)
+        mock_client.is_closed = False
+        provider._client = mock_client
+
+        chunks = []
+        async for chunk in provider.chat_completion_stream(
+            body={"model": "gpt-4o", "messages": []},
+            api_key="sk-test",
+            model_id="",
+        ):
+            chunks.append(chunk)
+
+        assert chunks[0].text_delta == ""
+        assert chunks[1].is_done
+
+    async def test_stream_connect_error(self, provider, override_settings):
+        override_settings(UPSTREAM_BASE_URL="https://api.openai.com")
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(side_effect=httpx.ConnectError("Connection refused"))
+        mock_client.is_closed = False
+        provider._client = mock_client
+
+        with pytest.raises(HTTPException) as exc_info:
+            async for _ in provider.chat_completion_stream(body={}, api_key="k", model_id=""):
+                pass
+        assert exc_info.value.status_code == 502
+
+    async def test_stream_upstream_error_status(self, provider, override_settings):
+        """Non-200 upstream status during stream should raise HTTPException."""
+        override_settings(
+            UPSTREAM_BASE_URL="https://api.openai.com",
+            UPSTREAM_API_KEY="sk-test",
+        )
+        mock_response = AsyncMock()
+        mock_response.status_code = 401
+        mock_response.aread = AsyncMock(return_value=b'{"error": "invalid key"}')
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_response)
+        mock_client.is_closed = False
+        provider._client = mock_client
+
+        with pytest.raises(HTTPException) as exc_info:
+            async for _ in provider.chat_completion_stream(
+                body={"model": "gpt-4o", "messages": []},
+                api_key="sk-test",
+                model_id="",
+            ):
+                pass
+        assert exc_info.value.status_code == 401
+
+    async def test_stream_sets_stream_true_in_body(self, provider, override_settings):
+        """The forwarded body should have stream: true set."""
+        override_settings(
+            UPSTREAM_BASE_URL="https://api.openai.com",
+            UPSTREAM_API_KEY="sk-test",
+        )
+        sse_lines = ["data: [DONE]", ""]
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.aiter_lines = MagicMock(return_value=_async_iter(sse_lines))
+        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = AsyncMock()
+        mock_client.stream = MagicMock(return_value=mock_response)
+        mock_client.is_closed = False
+        provider._client = mock_client
+
+        async for _ in provider.chat_completion_stream(
+            body={"model": "gpt-4o", "messages": []},
+            api_key="sk-test",
+            model_id="",
+        ):
+            pass
+
+        call_kwargs = mock_client.stream.call_args
+        sent_body = call_kwargs.kwargs.get("json", {})
+        assert sent_body.get("stream") is True
+
+
+async def _async_iter(items):
+    """Helper to make a sync list into an async iterator."""
+    for item in items:
+        yield item

@@ -1,6 +1,7 @@
 """Abstract base for LLM providers."""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 
@@ -8,6 +9,13 @@ from dataclasses import dataclass
 class ProviderResponse:
     status_code: int
     body: dict
+
+
+@dataclass
+class StreamChunk:
+    data: str          # Raw SSE payload (JSON string or "[DONE]")
+    is_done: bool      # True for terminal signal
+    text_delta: str    # Extracted text for accumulation
 
 
 class LLMProvider(ABC):
@@ -26,6 +34,17 @@ class LLMProvider(ABC):
             ProviderResponse with status code and response body dict.
         """
         ...
+
+    async def chat_completion_stream(
+        self, body: dict, api_key: str, model_id: str
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Stream a chat completion response. Override to enable streaming.
+
+        Yields StreamChunk objects with SSE-formatted data.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support streaming")
+        # Make this an async generator (yield never reached, but required for type)
+        yield  # pragma: no cover
 
     async def close(self) -> None:
         """Cleanup resources. Override if provider holds connections."""

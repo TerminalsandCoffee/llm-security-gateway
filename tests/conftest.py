@@ -8,6 +8,7 @@ import pytest
 
 from src.clients.models import ClientConfig
 from src.config.settings import get_settings
+from src.providers.base import StreamChunk
 
 
 @pytest.fixture
@@ -81,3 +82,26 @@ def override_settings(monkeypatch):
 
     # Always clear cache on teardown so other tests get fresh settings
     get_settings.cache_clear()
+
+
+def make_stream_chunks(text: str, chunk_size: int = 5) -> list[StreamChunk]:
+    """Build a list of StreamChunk objects from text, splitting into small deltas."""
+    chunks = []
+    for i in range(0, len(text), chunk_size):
+        delta = text[i:i + chunk_size]
+        data = json.dumps({
+            "id": "chatcmpl-test",
+            "object": "chat.completion.chunk",
+            "choices": [{"index": 0, "delta": {"content": delta}, "finish_reason": None}],
+        })
+        chunks.append(StreamChunk(data=data, is_done=False, text_delta=delta))
+    # Finish reason chunk
+    finish_data = json.dumps({
+        "id": "chatcmpl-test",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    })
+    chunks.append(StreamChunk(data=finish_data, is_done=False, text_delta=""))
+    # [DONE] sentinel
+    chunks.append(StreamChunk(data="[DONE]", is_done=True, text_delta=""))
+    return chunks

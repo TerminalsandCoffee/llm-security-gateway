@@ -1,5 +1,6 @@
 """Tests for src/providers/bedrock.py — Bedrock Converse API provider."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -199,3 +200,85 @@ class TestChatCompletion:
                 api_key="", model_id="model-id",
             )
         assert exc_info.value.status_code == 502
+
+
+# --- Streaming tests ---
+
+
+class TestBedrockStreaming:
+
+    async def test_stream_yields_content_chunks(self, provider):
+        """contentBlockDelta events should yield StreamChunks with text."""
+        stream_events = [
+            {"contentBlockDelta": {"delta": {"text": "Hello"}}},
+            {"contentBlockDelta": {"delta": {"text": " world"}}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+        provider._call_converse_stream = MagicMock(
+            return_value={"stream": stream_events}
+        )
+
+        chunks = []
+        async for chunk in provider.chat_completion_stream(
+            body={"messages": [{"role": "user", "content": "hi"}]},
+            api_key="",
+            model_id="anthropic.claude-3-sonnet",
+        ):
+            chunks.append(chunk)
+
+        # 2 content + 1 finish_reason + 1 [DONE]
+        assert len(chunks) == 4
+        assert chunks[0].text_delta == "Hello"
+        assert chunks[1].text_delta == " world"
+        assert not chunks[0].is_done
+        assert chunks[3].is_done
+        assert chunks[3].data == "[DONE]"
+
+        # Verify OpenAI-compatible chunk format
+        parsed = json.loads(chunks[0].data)
+        assert parsed["object"] == "chat.completion.chunk"
+        assert parsed["choices"][0]["delta"]["content"] == "Hello"
+
+    async def test_stream_max_tokens_finish_reason(self, provider):
+        """max_tokens stop reason maps to 'length' finish_reason."""
+        stream_events = [
+            {"contentBlockDelta": {"delta": {"text": "trunca"}}},
+            {"messageStop": {"stopReason": "max_tokens"}},
+        ]
+        provider._call_converse_stream = MagicMock(
+            return_value={"stream": stream_events}
+        )
+
+        chunks = []
+        async for chunk in provider.chat_completion_stream(
+            body={"messages": [{"role": "user", "content": "x"}]},
+            api_key="",
+            model_id="model-id",
+        ):
+            chunks.append(chunk)
+
+        # finish_reason chunk (second-to-last before [DONE])
+        finish_chunk = json.loads(chunks[-2].data)
+        assert finish_chunk["choices"][0]["finish_reason"] == "length"
+
+    async def test_stream_missing_model_id(self, provider):
+        with pytest.raises(HTTPException) as exc_info:
+            async for _ in provider.chat_completion_stream(
+                body={}, api_key="", model_id=""
+            ):
+                pass
+        assert exc_info.value.status_code == 400
+
+    async def test_stream_throttling_error(self, provider):
+        exc = Exception("Rate exceeded")
+        exc.response = {"Error": {"Code": "ThrottlingException"}}
+        provider._call_converse_stream = MagicMock(side_effect=exc)
+
+        with pytest.raises(HTTPException) as exc_info:
+            async for _ in provider.chat_completion_stream(
+                body={"messages": [{"role": "user", "content": "x"}]},
+                api_key="",
+                model_id="model-id",
+            ):
+                pass
+        assert exc_info.value.status_code == 429

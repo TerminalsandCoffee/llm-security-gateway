@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # Security pipeline
     injection_threshold: float = 0.7  # Risk score at which to block (0.0-1.0)
     pii_action: str = "redact"  # redact | block | log_only
+    response_pii_action: str = "log_only"  # redact | block | log_only
     rate_limit_rpm: int = 60  # Requests per minute per client
 
     # Client store
