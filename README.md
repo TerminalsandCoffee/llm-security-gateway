@@ -2,6 +2,9 @@
 
 A security proxy that sits between applications and LLM APIs (OpenAI, AWS Bedrock) to enforce authentication, rate limiting, content security policies, and response scanning — with real-time SSE streaming support.
 
+<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/2a65e9ba-a755-4c60-a7c9-329d3a7486f2" />
+
+
 **v0.5.0** | 168 tests | Zero security-module dependencies beyond stdlib
 
 ## Architecture
