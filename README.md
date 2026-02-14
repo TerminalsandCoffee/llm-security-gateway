@@ -9,20 +9,8 @@ A security proxy that sits between applications and LLM APIs (OpenAI, AWS Bedroc
 
 ## Architecture
 
-```
-                          ┌──────────────────────────────────┐
-                          │      LLM Security Gateway         │
-                          │                                   │
-Client App ──► API GW ──►│  Auth ► Rate Limit ► Model Check  │──► LLM Provider
-                          │  ► Inject Scan ► PII Scan         │    (OpenAI / Bedrock)
-                          │  ► Forward ► Response Scan         │
-                          │         │                          │
-                          │         ▼                          │
-                          │    Audit Log (JSON)                │
-                          └──────────────────────────────────┘
-                                    │
-                          CloudWatch / SIEM
-```
+<img width="1376" height="768" alt="image" src="https://github.com/user-attachments/assets/ff09b96e-e4d1-4778-a8bd-375100a68541" />
+
 
 **Local**: FastAPI + uvicorn | **Production**: API Gateway + Lambda (Terraform-managed)
 
